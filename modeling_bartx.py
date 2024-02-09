@@ -506,13 +506,28 @@ class BartxFlashAttention2(BartxAttention):
             value_states = self._reshape(self.v_proj(hidden_states), -1, bsz)
         
         if not is_cross_attention:
-            # Determine sequence length for rotary embeddings
-            seq_len = key_states.size(1)  # Use the sequence length of key_states
+            # original_query_shape = query_states.shape
+            bsz, q_len, _ = hidden_states.size()
+            
+            query_states = query_states.transpose(1, 2)
+            key_states = key_states.transpose(1, 2)
+            value_states = value_states.transpose(1, 2)
+            
+            kv_seq_len = key_states.shape[-2]
+            
+            if not self.is_causal:
+                position_ids=torch.tensor([[kv_seq_len-1]])
 
-            # Apply rotary embeddings
-            cos, sin = self.rotary_emb(value_states, seq_len=seq_len)  # Assuming rotary_emb is defined to generate cos, sin
-            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids, unsqueeze_dim=2)
-
+            # Because the input can be padded, the absolute sequence length depends on the max position id.
+            rotary_seq_len = max(kv_seq_len, position_ids[:, -1].max().item()) + 1
+            cos, sin = self.rotary_emb(value_states, seq_len=rotary_seq_len)
+            
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)        
+            query_states=query_states.transpose(1, 2)#.reshape(original_query_shape)
+            key_states = key_states.transpose(1, 2)
+            value_states = value_states.transpose(1, 2)
+        
+        
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
             # Further calls to cross_attention layer can then reuse all cross-attention
