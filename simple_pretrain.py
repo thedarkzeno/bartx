@@ -1,6 +1,8 @@
-import torch
-from datasets import load_dataset
 import argparse
+import random
+import torch
+
+from datasets import load_dataset
 from transformers import AutoTokenizer, DataCollatorForSeq2Seq, Seq2SeqTrainingArguments, Seq2SeqTrainer
 from modeling_bartx import BartxForConditionalGeneration
 
@@ -34,22 +36,51 @@ class Trainer:
             torch_dtype=torch.bfloat16,
             attn_implementation="flash_attention_2")
 
-    def preprocess_function(self, examples):
-        # Split each text into two halves
-        first_half_texts = []
-        second_half_texts = []
-        for doc in examples["text"]:
-            split_point = len(doc) // 2  # Calculate the midpoint of the text
-            first_half_texts.append(doc[:split_point])
-            second_half_texts.append(doc[split_point:])
+    # def preprocess_function(self, examples):
+    #     # Split each text into two halves
+    #     first_half_texts = []
+    #     second_half_texts = []
+    #     for doc in examples["text"]:
+    #         split_point = len(doc) // 2  # Calculate the midpoint of the text
+    #         first_half_texts.append(doc[:split_point])
+    #         second_half_texts.append(doc[split_point:])
             
+    #     model_inputs = self.tokenizer(
+    #         first_half_texts, max_length=self.max_input_length, truncation=True)
+
+    #     # Setup the tokenizer for targets
+    #     with self.tokenizer.as_target_tokenizer():
+    #         labels = self.tokenizer(
+    #             second_half_texts, max_length=self.max_target_length, truncation=True)
+
+    #     model_inputs["labels"] = labels["input_ids"]
+    #     return model_inputs
+        
+    def preprocess_function(self, examples):
+        processed_texts = []
+        target_texts = []  # Renamed for clarity
+        for doc in examples["text"]:
+            if random.random() < 0.5:  # 50% chance to split as before
+                split_point = len(doc) // 2
+                processed_texts.append("Continue: "+doc[:split_point])
+                target_texts.append(doc[split_point:])
+            else:  # 50% chance to mask a random part
+                mask_length = random.randint(1, max(1, len(doc) // 4))  # Determine length of the mask
+                start_index = random.randint(0, max(0, len(doc) - mask_length - 1))
+                # Save the masked part for the target
+                masked_part = doc[start_index:start_index + mask_length]
+                # Create the masked text
+                masked_text = doc[:start_index] + "<mask>" + doc[start_index + mask_length:]
+                processed_texts.append("Preencha: "+masked_text)
+                target_texts.append(masked_part)  # Only the masked part is the target
+
         model_inputs = self.tokenizer(
-            first_half_texts, max_length=self.max_input_length, truncation=True)
+            processed_texts, max_length=self.max_input_length, truncation=True)
 
         # Setup the tokenizer for targets
         with self.tokenizer.as_target_tokenizer():
             labels = self.tokenizer(
-                second_half_texts, max_length=self.max_target_length, truncation=True)
+                target_texts, max_length=self.max_target_length, truncation=True)
 
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
@@ -95,7 +126,8 @@ class Trainer:
         )
 
         data_collator = DataCollatorForSeq2Seq(
-            self.tokenizer, model=self.model)
+            self.tokenizer, model=self.model
+        )
 
         trainer = Seq2SeqTrainer(
             self.model,
